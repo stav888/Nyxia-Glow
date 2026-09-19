@@ -57,7 +57,11 @@ fun RetouchScreen(
     onToolSelected: (String) -> Unit,
     onPresetSelected: (String) -> Unit,
     onReset: () -> Unit,
-    onApply: () -> Unit
+    onApply: () -> Unit,
+    lipIntensity: Float = 0.35f,
+    blushIntensity: Float = 0.20f,
+    onLipIntensityChange: (Float) -> Unit = {},
+    onBlushIntensityChange: (Float) -> Unit = {}
 ) {
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.weight(1f))
@@ -121,18 +125,13 @@ fun RetouchScreen(
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("SMOOTHING", color = TextMuted, fontSize = 12.sp, letterSpacing = .5.sp)
-                Text("${(smoothingIntensity * 100).toInt()}%", color = CoralSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Slider(
-                value = smoothingIntensity,
-                onValueChange = onSmoothingChange,
-                valueRange = 0f..1f,
-                modifier = Modifier.semantics {
-                    stateDescription = "Smoothing intensity ${(smoothingIntensity * 100).toInt()} percent"
-                },
-                colors = SliderDefaults.colors(thumbColor = Coral, activeTrackColor = Coral, inactiveTrackColor = SurfaceRaised)
+            BeautyControlsPanel(
+                skinSmooth = smoothingIntensity,
+                lipIntensity = lipIntensity,
+                blushIntensity = blushIntensity,
+                onSkinSmoothChanged = onSmoothingChange,
+                onLipIntensityChanged = onLipIntensityChange,
+                onBlushIntensityChanged = onBlushIntensityChange
             )
             Surface(
                 color = SurfaceRaised.copy(alpha = .9f),
@@ -171,6 +170,40 @@ fun RetouchScreen(
             }
         }
     }
+}
+
+@Composable
+fun BeautyControlsPanel(
+    skinSmooth: Float,
+    lipIntensity: Float,
+    blushIntensity: Float,
+    onSkinSmoothChanged: (Float) -> Unit,
+    onLipIntensityChanged: (Float) -> Unit,
+    onBlushIntensityChanged: (Float) -> Unit
+) {
+    BeautySlider("SKIN SMOOTH", skinSmooth, "Smoothing intensity ${(skinSmooth * 100).toInt()} percent", onSkinSmoothChanged)
+    BeautySlider("LIP INTENSITY", lipIntensity, "Lip intensity ${(lipIntensity * 100).toInt()} percent", onLipIntensityChanged)
+    BeautySlider("BLUSH INTENSITY", blushIntensity, "Blush intensity ${(blushIntensity * 100).toInt()} percent", onBlushIntensityChanged)
+}
+
+@Composable
+private fun BeautySlider(
+    label: String,
+    value: Float,
+    stateDescriptionText: String,
+    onValueChange: (Float) -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = TextMuted, fontSize = 12.sp, letterSpacing = .5.sp)
+        Text("${(value * 100).toInt()}%", color = CoralSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    }
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        valueRange = 0f..1f,
+        modifier = Modifier.semantics { stateDescription = stateDescriptionText },
+        colors = SliderDefaults.colors(thumbColor = Coral, activeTrackColor = Coral, inactiveTrackColor = SurfaceRaised)
+    )
 }
 
 private fun lookSwatch(look: GlowLook): Color {

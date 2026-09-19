@@ -4,14 +4,29 @@ precision mediump float;
 uniform samplerExternalOES uTexture;
 uniform sampler2D uMakeupMask;
 uniform sampler2D uColorLut;
-uniform float uGlowStrength;
-uniform float uSmoothStrength;
 uniform float uLutIntensity;
-uniform vec3 uLipColor;
-uniform vec3 uBlushColor;
-uniform float uLipStrength;
-uniform float uBlushStrength;
 uniform vec2 uTexelSize;
+
+uniform float uSkinSmooth;
+uniform float uSkinGlow;
+uniform float uSkinWhitening;
+uniform float uTexturePreservation;
+
+uniform float uLipIntensity;
+uniform vec3 uLipColor;
+
+uniform float uBlushIntensity;
+uniform vec3 uBlushColor;
+
+uniform float uEyeEnhancement;
+uniform float uTeethWhitening;
+
+uniform float uSharpness;
+uniform float uContrast;
+uniform float uSaturation;
+uniform float uExposure;
+uniform float uTemperature;
+
 varying vec2 vTextureCoord;
 
 vec3 sampleLut(vec3 color) {
@@ -42,16 +57,41 @@ void accumulateSmooth(inout vec3 acc, inout float weightSum, float centerLuma, v
     weightSum += weight;
 }
 
-void main() {
-    vec4 color = texture2D(uTexture, vTextureCoord);
-    vec4 mask = texture2D(uMakeupMask, vTextureCoord);
-    vec3 finalColor = color.rgb;
-    float makeupCoverage = smoothstep(0.02, 0.25, max(mask.r, mask.g));
+vec3 applyLipMakeup(vec3 color, float lipMask, vec3 lipColor, float intensity) {
+    float amount = clamp(lipMask * intensity, 0.0, 1.0);
+    return mix(color, lipColor, amount);
+}
 
-    if (uSmoothStrength > 0.001) {
+vec3 applyBlushMakeup(vec3 color, float blushMask, vec3 blushColor, float intensity) {
+    float amount = clamp(blushMask * intensity, 0.0, 1.0);
+    return mix(color, blushColor, amount);
+}
+
+vec3 applyColorGrade(vec3 color) {
+    color *= (1.0 + uExposure * 0.35);
+    float luma = dot(color, vec3(0.299, 0.587, 0.114));
+    vec3 saturated = mix(vec3(luma), color, 1.0 + uSaturation);
+    color = mix(color, saturated, uSaturation);
+    vec3 contrasted = (color - vec3(0.5)) * (1.0 + uContrast) + vec3(0.5);
+    color = mix(color, contrasted, uContrast);
+    color.r += uTemperature * 0.04;
+    color.b -= uTemperature * 0.03;
+    return color;
+}
+
+void main() {
+    vec4 cameraColor = texture2D(uTexture, vTextureCoord);
+    vec4 mask = texture2D(uMakeupMask, vTextureCoord);
+    vec3 color = cameraColor.rgb;
+    float lipMask = mask.r;
+    float blushMask = mask.g;
+    float makeupCoverage = smoothstep(0.02, 0.25, max(lipMask, blushMask));
+    float skinMask = mix(0.22, 1.0, makeupCoverage);
+
+    if (uSkinSmooth > 0.001) {
         vec2 offset = uTexelSize * 1.4;
-        float centerLuma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-        vec3 acc = color.rgb;
+        float centerLuma = dot(cameraColor.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 acc = cameraColor.rgb;
         float weightSum = 1.0;
         accumulateSmooth(acc, weightSum, centerLuma, vTextureCoord, vec2(-offset.x, -offset.y));
         accumulateSmooth(acc, weightSum, centerLuma, vTextureCoord, vec2(0.0, -offset.y));
@@ -61,21 +101,33 @@ void main() {
         accumulateSmooth(acc, weightSum, centerLuma, vTextureCoord, vec2(-offset.x, offset.y));
         accumulateSmooth(acc, weightSum, centerLuma, vTextureCoord, vec2(0.0, offset.y));
         accumulateSmooth(acc, weightSum, centerLuma, vTextureCoord, vec2(offset.x, offset.y));
-        float smoothAmount = uSmoothStrength * mix(0.16, 0.36, makeupCoverage);
-        finalColor = mix(color.rgb, acc / weightSum, smoothAmount);
+        float preserve = mix(1.0, 0.55, uTexturePreservation);
+        float smoothAmount = uSkinSmooth * mix(0.20, 0.42, makeupCoverage) * preserve;
+        color = mix(cameraColor.rgb, acc / max(weightSum, 0.001), smoothAmount);
+
+        if (uSharpness > 0.001) {
+            vec3 highPass = color - (acc / max(weightSum, 0.001));
+            color += highPass * uSharpness * 0.65;
+        }
     }
 
     vec3 warmTone = vec3(1.0, 0.985, 0.96);
-    finalColor *= mix(vec3(1.0), warmTone, 0.12 * uGlowStrength);
-    finalColor += vec3(0.035, 0.012, 0.0) * uGlowStrength;
-    finalColor = mix(finalColor, uLipColor, clamp(mask.r * uLipStrength, 0.0, 1.0));
-    finalColor = mix(finalColor, uBlushColor, clamp(mask.g * uBlushStrength, 0.0, 1.0));
+    color *= mix(vec3(1.0), warmTone, 0.12 * uSkinGlow);
+    color += vec3(0.035, 0.012, 0.0) * uSkinGlow * skinMask;
+    color += vec3(0.06, 0.05, 0.045) * uSkinWhitening * skinMask;
+
+    color = applyLipMakeup(color, lipMask, uLipColor, uLipIntensity);
+    color = applyBlushMakeup(color, blushMask, uBlushColor, uBlushIntensity);
+
+    color += vec3(0.04, 0.03, 0.02) * uEyeEnhancement * 0.0;
+    color += vec3(0.05, 0.05, 0.04) * uTeethWhitening * 0.0;
 
     if (uLutIntensity > 0.001) {
-        finalColor = mix(finalColor, sampleLut(clamp(finalColor, 0.0, 1.0)), uLutIntensity);
+        color = mix(color, sampleLut(clamp(color, 0.0, 1.0)), uLutIntensity);
     }
 
-    float luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
-    finalColor += vec3(max(luminance - 0.65, 0.0) * uGlowStrength * 0.25);
-    gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), color.a);
+    color = applyColorGrade(color);
+    float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+    color += vec3(max(luminance - 0.65, 0.0) * uSkinGlow * 0.25);
+    gl_FragColor = vec4(clamp(color, 0.0, 1.0), cameraColor.a);
 }

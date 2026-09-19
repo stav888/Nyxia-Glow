@@ -1,5 +1,7 @@
 package com.nyxiaglow.app.ui
 
+import com.nyxiaglow.app.camera.BeautyControls
+
 data class GlowLook(
     val id: String,
     val title: String,
@@ -10,7 +12,17 @@ data class GlowLook(
     val smooth: Float,
     val glow: Float,
     val lutIntensity: Float
-)
+) {
+    fun toBeautyControls(texturePreservation: Float = 1f): BeautyControls = BeautyControls(
+        skinSmooth = smooth,
+        skinGlow = glow,
+        texturePreservation = texturePreservation,
+        lipIntensity = lipStrength,
+        lipColor = GlowLooks.hexToRgb(lipHex),
+        blushIntensity = blushStrength,
+        blushColor = GlowLooks.hexToRgb(blushHex)
+    )
+}
 
 object GlowLooks {
     val all: List<GlowLook> = listOf(

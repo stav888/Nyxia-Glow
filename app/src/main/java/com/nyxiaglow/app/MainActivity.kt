@@ -103,7 +103,9 @@ import androidx.lifecycle.compose.currentStateAsState
 import com.nyxiaglow.app.BuildConfig
 import com.nyxiaglow.app.camera.FaceLandmarkAnalyzer
 import com.nyxiaglow.app.camera.BeautyCameraRenderer
+import com.nyxiaglow.app.camera.BeautyControls
 import com.nyxiaglow.app.camera.LandmarkChangeDetector
+import com.nyxiaglow.app.camera.LookLut
 import com.nyxiaglow.app.camera.MakeupMaskGenerator
 import com.nyxiaglow.app.camera.lightingState
 import com.nyxiaglow.app.ui.RetouchScreen
@@ -197,6 +199,24 @@ private fun GlowStudio() {
     var activeTab by remember { mutableStateOf("Camera") }
     var retouchState by remember { mutableStateOf(RetouchState()) }
     var selectedLookId by remember { mutableStateOf("natural") }
+    fun applyLook(id: String) {
+        val look = GlowLooks.byId(id)
+        selectedLookId = look.id
+        retouchState = retouchState.copy(
+            smoothingIntensity = look.smooth,
+            lipIntensity = look.lipStrength,
+            blushIntensity = look.blushStrength,
+            selectedPreset = look.id
+        )
+    }
+    val selectedLook = GlowLooks.byId(selectedLookId)
+    val beautyControls = selectedLook.toBeautyControls(
+        texturePreservation = if (retouchState.preserveTexture) 1f else 0.2f
+    ).copy(
+        skinSmooth = retouchState.smoothingIntensity,
+        lipIntensity = retouchState.lipIntensity,
+        blushIntensity = retouchState.blushIntensity
+    ).clamped()
     var reticleVisible by remember { mutableStateOf(true) }
     var captureRequest by remember { mutableStateOf(0) }
     val captureLock = remember { AtomicBoolean(false) }
@@ -246,15 +266,20 @@ private fun GlowStudio() {
                 onTextureToggle = { retouchState = retouchState.copy(preserveTexture = !retouchState.preserveTexture) },
                 onSmoothingChange = { retouchState = retouchState.copy(smoothingIntensity = it.coerceIn(0f, 1f)) },
                 onToolSelected = { retouchState = retouchState.copy(selectedTool = it) },
-                onPresetSelected = { selectedLookId = lookIdForPreset(it) },
+                onPresetSelected = { applyLook(lookIdForPreset(it)) },
                 onReset = {
                     retouchState = retouchState.reset()
+                    selectedLookId = GlowLooks.natural.id
                     statusMessage = "Retouch reset"
                 },
-                onApply = { statusMessage = retouchApplyMessage(capturedUri != null) }
+                onApply = { statusMessage = retouchApplyMessage(capturedUri != null) },
+                lipIntensity = retouchState.lipIntensity,
+                blushIntensity = retouchState.blushIntensity,
+                onLipIntensityChange = { retouchState = retouchState.copy(lipIntensity = it.coerceIn(0f, 1f)) },
+                onBlushIntensityChange = { retouchState = retouchState.copy(blushIntensity = it.coerceIn(0f, 1f)) }
             )
         } else {
-            CameraPreview(Modifier.fillMaxSize(), facing, zoom, flashOn, captureRequest, glow, retouchState.preserveTexture, retouchState.smoothingIntensity, selectedLookId, stillUri,
+            CameraPreview(Modifier.fillMaxSize(), facing, zoom, flashOn, captureRequest, beautyControls, selectedLookId, stillUri,
                 onAmbient = { ambient = it },
                 onLandmarksDetected = { result, _ ->
                     if (result.faceLandmarks().isNotEmpty()) statusMessage = "Face detected"
@@ -284,7 +309,7 @@ private fun GlowStudio() {
                             selectedLookId = selectedLookId,
                             zoom = zoom,
                             capturing = captureLock.get(),
-                            onLook = { selectedLookId = it },
+                            onLook = { applyLook(it) },
                             onZoom = { zoom = it },
                             onFlip = { facing = if (facing == CameraSelector.LENS_FACING_FRONT) CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT },
                             onGallery = { galleryLauncher.launch("image/*") },
@@ -555,9 +580,7 @@ private fun CameraPreview(
     zoom: String,
     flashOn: Boolean,
     captureRequest: Int,
-    glowStrength: Float,
-    preserveTexture: Boolean,
-    smoothingIntensity: Float,
+    beautyControls: BeautyControls,
     makeupPresetName: String,
     stillUri: Uri?,
     onAmbient: (Float) -> Unit,
@@ -747,14 +770,13 @@ private fun CameraPreview(
     }
 
     val look = GlowLooks.byId(makeupPresetName)
-    LaunchedEffect(look, glowStrength, preserveTexture, smoothingIntensity) {
-        val intensity = smoothingIntensity.coerceIn(0f, 1f)
-        val lip = GlowLooks.hexToRgb(look.lipHex)
-        val blush = GlowLooks.hexToRgb(look.blushHex)
+    LaunchedEffect(look.id, beautyControls) {
+        val lutPixels = withContext(Dispatchers.Default) {
+            LookLut.buildPixels(LookLut.gradeFor(look.id))
+        }
         glView.queueEvent {
-            renderer.setLook(lip, blush, look.lipStrength * intensity, look.blushStrength * intensity)
-            renderer.setGlowStrength((look.glow * intensity).coerceIn(0f, 1f))
-            renderer.setSmoothStrength((look.smooth * intensity).coerceIn(0f, 1f))
+            renderer.setBeautyControls(beautyControls)
+            renderer.setColorLut(lutPixels, look.lutIntensity)
         }
         glView.requestRender()
     }

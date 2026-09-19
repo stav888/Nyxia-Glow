@@ -74,12 +74,7 @@ class BeautyCameraRenderer(
     private val releaseCallbacks = mutableListOf<() -> Unit>()
     private val releaseState = RendererReleaseState()
     private var program = 0
-    private var glowStrength = 0.68f
-    private var smoothStrength = 0.2f
-    @Volatile private var lipColor = floatArrayOf(0.82f, 0.12f, 0.24f)
-    @Volatile private var blushColor = floatArrayOf(1f, 0.4f, 0.4f)
-    @Volatile private var lipStrength = 0.5f
-    @Volatile private var blushStrength = 0.5f
+    @Volatile private var beautyControls = BeautyControls()
     @Volatile private var lutIntensity = 0f
     private var released = false
     private var glCleanupStarted = false
@@ -89,12 +84,21 @@ class BeautyCameraRenderer(
     private var positionLocation = -1
     private var textureCoordLocation = -1
     private var textureMatrixLocation = -1
-    private var glowLocation = -1
-    private var smoothLocation = -1
+    private var skinSmoothLocation = -1
+    private var skinGlowLocation = -1
+    private var skinWhiteningLocation = -1
+    private var texturePreservationLocation = -1
     private var lipColorLocation = -1
     private var blushColorLocation = -1
-    private var lipStrengthLocation = -1
-    private var blushStrengthLocation = -1
+    private var lipIntensityLocation = -1
+    private var blushIntensityLocation = -1
+    private var eyeEnhancementLocation = -1
+    private var teethWhiteningLocation = -1
+    private var sharpnessLocation = -1
+    private var contrastLocation = -1
+    private var saturationLocation = -1
+    private var exposureLocation = -1
+    private var temperatureLocation = -1
     private var uniformWarningLogged = false
     private var makeupMaskLocation = -1
     private var colorLutLocation = -1
@@ -111,12 +115,22 @@ class BeautyCameraRenderer(
     private var viewportHeight = 0
     @Volatile private var orientation = PreviewOrientation.Front
 
+    fun setBeautyControls(controls: BeautyControls) {
+        synchronized(lock) {
+            beautyControls = controls.clamped()
+        }
+    }
+
     fun setGlowStrength(value: Float) {
-        synchronized(lock) { glowStrength = RendererParameters.clampStrength(value) }
+        synchronized(lock) {
+            beautyControls = beautyControls.copy(skinGlow = RendererParameters.clampStrength(value))
+        }
     }
 
     fun setSmoothStrength(value: Float) {
-        synchronized(lock) { smoothStrength = RendererParameters.clampStrength(value) }
+        synchronized(lock) {
+            beautyControls = beautyControls.copy(skinSmooth = RendererParameters.clampStrength(value))
+        }
     }
 
     fun setMirrored(enabled: Boolean) {
@@ -128,12 +142,13 @@ class BeautyCameraRenderer(
     }
 
     fun setLook(lipRgb: FloatArray, blushRgb: FloatArray, lipStrengthValue: Float, blushStrengthValue: Float) {
-        require(lipRgb.size >= 3 && blushRgb.size >= 3)
         synchronized(lock) {
-            lipColor = lipRgb.copyOf(3)
-            blushColor = blushRgb.copyOf(3)
-            lipStrength = RendererParameters.clampStrength(lipStrengthValue)
-            blushStrength = RendererParameters.clampStrength(blushStrengthValue)
+            beautyControls = beautyControls.copy(
+                lipColor = BeautyControls.clampRgb(lipRgb, 0.75f, 0.20f, 0.30f),
+                blushColor = BeautyControls.clampRgb(blushRgb, 0.85f, 0.35f, 0.40f),
+                lipIntensity = RendererParameters.clampStrength(lipStrengthValue),
+                blushIntensity = RendererParameters.clampStrength(blushStrengthValue)
+            )
         }
     }
 
@@ -148,12 +163,12 @@ class BeautyCameraRenderer(
 
     fun setMakeup(lipRed: Float, lipGreen: Float, lipBlue: Float, lipStrengthValue: Float,
                   blushRed: Float, blushGreen: Float, blushBlue: Float, blushStrengthValue: Float) {
-        synchronized(lock) {
-            lipColor = floatArrayOf(lipRed.coerceIn(0f, 1f), lipGreen.coerceIn(0f, 1f), lipBlue.coerceIn(0f, 1f))
-            blushColor = floatArrayOf(blushRed.coerceIn(0f, 1f), blushGreen.coerceIn(0f, 1f), blushBlue.coerceIn(0f, 1f))
-            lipStrength = RendererParameters.clampStrength(lipStrengthValue)
-            blushStrength = RendererParameters.clampStrength(blushStrengthValue)
-        }
+        setLook(
+            floatArrayOf(lipRed, lipGreen, lipBlue),
+            floatArrayOf(blushRed, blushGreen, blushBlue),
+            lipStrengthValue,
+            blushStrengthValue
+        )
     }
 
     fun updateMakeupMask(bitmap: Bitmap) {
@@ -355,18 +370,27 @@ class BeautyCameraRenderer(
             cropScaleLocation = GLES20.glGetUniformLocation(program, "uCropScale")
             mirrorLocation = GLES20.glGetUniformLocation(program, "uMirror")
             flipYLocation = GLES20.glGetUniformLocation(program, "uFlipY")
-            glowLocation = GLES20.glGetUniformLocation(program, "uGlowStrength")
-            smoothLocation = GLES20.glGetUniformLocation(program, "uSmoothStrength")
+            skinSmoothLocation = GLES20.glGetUniformLocation(program, "uSkinSmooth")
+            skinGlowLocation = GLES20.glGetUniformLocation(program, "uSkinGlow")
+            skinWhiteningLocation = GLES20.glGetUniformLocation(program, "uSkinWhitening")
+            texturePreservationLocation = GLES20.glGetUniformLocation(program, "uTexturePreservation")
             lipColorLocation = GLES20.glGetUniformLocation(program, "uLipColor")
             blushColorLocation = GLES20.glGetUniformLocation(program, "uBlushColor")
-            lipStrengthLocation = GLES20.glGetUniformLocation(program, "uLipStrength")
-            blushStrengthLocation = GLES20.glGetUniformLocation(program, "uBlushStrength")
+            lipIntensityLocation = GLES20.glGetUniformLocation(program, "uLipIntensity")
+            blushIntensityLocation = GLES20.glGetUniformLocation(program, "uBlushIntensity")
+            eyeEnhancementLocation = GLES20.glGetUniformLocation(program, "uEyeEnhancement")
+            teethWhiteningLocation = GLES20.glGetUniformLocation(program, "uTeethWhitening")
+            sharpnessLocation = GLES20.glGetUniformLocation(program, "uSharpness")
+            contrastLocation = GLES20.glGetUniformLocation(program, "uContrast")
+            saturationLocation = GLES20.glGetUniformLocation(program, "uSaturation")
+            exposureLocation = GLES20.glGetUniformLocation(program, "uExposure")
+            temperatureLocation = GLES20.glGetUniformLocation(program, "uTemperature")
             makeupMaskLocation = GLES20.glGetUniformLocation(program, "uMakeupMask")
             colorLutLocation = GLES20.glGetUniformLocation(program, "uColorLut")
             lutIntensityLocation = GLES20.glGetUniformLocation(program, "uLutIntensity")
             texelSizeLocation = GLES20.glGetUniformLocation(program, "uTexelSize")
             if (com.nyxiaglow.app.BuildConfig.DEBUG && !uniformWarningLogged &&
-                listOf(lipColorLocation, blushColorLocation, lipStrengthLocation, blushStrengthLocation).any { it == -1 }
+                listOf(skinSmoothLocation, skinGlowLocation, lipColorLocation, lipIntensityLocation).any { it == -1 }
             ) {
                 uniformWarningLogged = true
                 Log.w("BeautyCameraRenderer", "One or more look shader uniforms were not found")
@@ -424,33 +448,18 @@ class BeautyCameraRenderer(
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
-        val currentGlow: Float
-        val currentSmooth: Float
-        val currentLip: FloatArray
-        val currentBlush: FloatArray
-        val currentLipStrength: Float
-        val currentBlushStrength: Float
+        val controls: BeautyControls
         val currentLutIntensity: Float
         val currentWidth: Int
         val currentHeight: Int
         synchronized(lock) {
-            currentGlow = glowStrength
-            currentSmooth = smoothStrength
-            currentLip = lipColor.copyOf()
-            currentBlush = blushColor.copyOf()
-            currentLipStrength = lipStrength
-            currentBlushStrength = blushStrength
+            controls = beautyControls
             currentLutIntensity = lutIntensity
             currentWidth = textureWidth
             currentHeight = textureHeight
         }
         GLES20.glUniform1i(textureUniformLocation, 0)
-        GLES20.glUniform1f(glowLocation, currentGlow)
-        GLES20.glUniform1f(smoothLocation, currentSmooth)
-        GLES20.glUniform3f(lipColorLocation, currentLip[0], currentLip[1], currentLip[2])
-        GLES20.glUniform3f(blushColorLocation, currentBlush[0], currentBlush[1], currentBlush[2])
-        GLES20.glUniform1f(lipStrengthLocation, currentLipStrength)
-        GLES20.glUniform1f(blushStrengthLocation, currentBlushStrength)
+        updateBeautyUniforms(controls)
         GLES20.glUniform2f(texelSizeLocation, 1f / currentWidth, 1f / currentHeight)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, makeupTextureId)
@@ -474,6 +483,24 @@ class BeautyCameraRenderer(
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(positionLocation)
         GLES20.glDisableVertexAttribArray(textureCoordLocation)
+    }
+
+    private fun updateBeautyUniforms(controls: BeautyControls) {
+        GLES20.glUniform1f(skinSmoothLocation, controls.skinSmooth)
+        GLES20.glUniform1f(skinGlowLocation, controls.skinGlow)
+        GLES20.glUniform1f(skinWhiteningLocation, controls.skinWhitening)
+        GLES20.glUniform1f(texturePreservationLocation, controls.texturePreservation)
+        GLES20.glUniform1f(lipIntensityLocation, controls.lipIntensity)
+        GLES20.glUniform3fv(lipColorLocation, 1, controls.lipColor, 0)
+        GLES20.glUniform1f(blushIntensityLocation, controls.blushIntensity)
+        GLES20.glUniform3fv(blushColorLocation, 1, controls.blushColor, 0)
+        GLES20.glUniform1f(eyeEnhancementLocation, controls.eyeEnhancement)
+        GLES20.glUniform1f(teethWhiteningLocation, controls.teethWhitening)
+        GLES20.glUniform1f(sharpnessLocation, controls.sharpness)
+        GLES20.glUniform1f(contrastLocation, controls.contrast)
+        GLES20.glUniform1f(saturationLocation, controls.saturation)
+        GLES20.glUniform1f(exposureLocation, controls.exposure)
+        GLES20.glUniform1f(temperatureLocation, controls.temperature)
     }
 
     override fun onFrameAvailable(surfaceTexture: SurfaceTexture?) {

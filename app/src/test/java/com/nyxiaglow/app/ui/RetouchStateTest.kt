@@ -13,6 +13,8 @@ class RetouchStateTest {
         assertEquals(0.45f, state.smoothingIntensity, 0.0001f)
         assertEquals("Skin", state.selectedTool)
         assertEquals("natural", state.selectedPreset)
+        assertEquals(0.35f, state.lipIntensity, 0.0001f)
+        assertEquals(0.20f, state.blushIntensity, 0.0001f)
     }
 
     @Test
