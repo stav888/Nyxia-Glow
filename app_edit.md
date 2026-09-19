@@ -20,7 +20,18 @@ The current implementation provides:
 - Stitch-inspired dark AuraSync viewfinder styling with AI Active and 4K RAW status capsules.
 - Stitch-inspired Retouch dashboard with tool categories, preset strip, smoothing control, micro-texture toggle, reset, and apply actions.
 
-The current implementation does not yet apply a real beauty filter, TFLite smoothing model, or OpenGL Adaptive Glow effect to the camera pixels. Presets and texture preservation currently affect the UI state and reticle presentation only.
+The live preview runs through a real GPU pipeline: CameraX `Preview` feeds
+`BeautyCameraRenderer` (GLSurfaceView), which applies `beauty_shader.glsl` to
+every frame — glow (`uGlowStrength`), smoothing (`uSmoothStrength`), and a
+MediaPipe-driven makeup mask (`MakeupMaskGenerator` uploads lip coverage in the
+R channel and blush in the G channel to `uMakeupMask`).
+
+Still UI-only (no pixel effect): the Shape tool, color differences between
+Retouch presets (Smooth/Freckles/Matte/Dewy/Refine currently change state
+only — lip/blush colors are still hardcoded in GLSL), preset names without a
+color palette, and Looks without a product catalog. Photo capture uses a
+separate `ImageCapture` use case, so the saved JPEG is the raw camera frame
+without the live effect (known product bug).
 
 ## 2. Repository Structure
 
@@ -299,7 +310,12 @@ The pure mapping is implemented in `camera/LightingState.kt` and tested by `Ligh
 11. Keeps the bitmap alive for asynchronous MediaPipe processing instead of recycling it immediately after `detectAsync`.
 12. Closes the landmarker when the camera effect is disposed.
 
-The current callback is connected for pipeline readiness, but landmark points do not yet drive a visual beauty filter.
+Landmark points drive the live makeup mask: `CameraPreview` passes each
+`FaceLandmarkerResult` to `MakeupMaskGenerator.generateMask()`, uploads the
+bitmap via `renderer.updateMakeupMask()`, and the shader composites lip color
+(mask R) and blush (mask G) over the camera texture. When no face is present
+the mask is cleared. Smoothing intensity reaches `uSmoothStrength`
+(scaled ×0.5 while texture preservation is on).
 
 ## 13. User Functionality
 
@@ -324,7 +340,8 @@ The four presets are:
 - Velvet: 34%
 - Defined: 57%
 
-Selection updates the reticle arc and selected styling. It does not yet modify pixels in the camera preview.
+Selection updates the reticle arc, selected styling, and the live `uGlowStrength`
+uniform (Soft 68%, Radiant 86%, Velvet 34%, Defined 57%).
 
 ### Zoom
 
@@ -332,7 +349,9 @@ The available choices are `0.5x`, `1x`, `2x`, and `3x`. The selected value is cl
 
 ### Texture preservation
 
-The control toggles On/Off state and exposes switch semantics. It currently changes the UI state only; no TFLite smoothing or texture mask is applied.
+The control scales the live `uSmoothStrength` uniform (×0.5 while On, ×1.0 while
+Off). There is no TFLite model behind it — smoothing is the GL blur in
+`beauty_shader.glsl`.
 
 ### Gallery picker
 
@@ -351,7 +370,9 @@ The shutter uses CameraX `ImageCapture` and MediaStore:
 
 ### Retouch dashboard
 
-The Retouch tab is a functional Compose surface reachable from the Looks item in bottom navigation. It exposes Skin, Shape, Light, and Makeup tool categories, Smooth/Freckles/Matte/Dewy/Refine preset choices, a smoothing-intensity control, the micro-texture toggle, Reset, and Apply & Save feedback. These controls currently update UI state and status only; they do not yet modify image pixels.
+The Retouch tab is a functional Compose surface reachable from the Looks item in bottom navigation. It exposes Skin, Shape, Light, and Makeup tool categories, Smooth/Freckles/Matte/Dewy/Refine preset choices, a smoothing-intensity control, the micro-texture toggle, Reset, and Apply & Save feedback. The smoothing slider and texture toggle drive the live shader (see above).
+Preset choices, tool tabs (Skin/Shape/Light/Makeup), Reset, and Apply & Save
+currently update UI state and status only; the Shape tab has no effect at all.
 
 ### Flip camera
 
@@ -404,16 +425,19 @@ Still recommended for a production release:
 
 The following are intentionally not complete yet:
 
-- No TFLite texture-preservation model.
-- No OpenGL or GPU shader that changes preview pixels.
-- Face landmarks are detected but not used to create a mask or retouch result.
-- Presets modify reticle state, not the camera image.
-- Texture toggle modifies UI state, not image processing.
+- No TFLite texture-preservation model (smoothing is GL blur, not ML).
+- Retouch presets (Smooth/Freckles/Matte/Dewy/Refine) have no per-preset colors;
+  lip/blush colors are still hardcoded in `beauty_shader.glsl`.
+- Capture saves the raw CameraX frame, not the shaded preview.
+- Face landmarks drive a coarse mask (single lip polygon, two fixed blush
+  circles) — no dense mesh, no landmark stabilization, no mirror/rotation
+  verification on a real device.
+- Shape tool has no effect.
 - Gallery is the system picker, not a saved-photo grid.
 - Looks and Profile are lightweight placeholder destinations.
 - Settings are not persisted.
 - Camera and UI state are not ViewModel-backed.
-- No export, share, account, subscription, or retouch editor flow.
+- No export, share, account, subscription, product catalog, or shade-search flow.
 
 ## 17. Recommended Next Development Steps
 

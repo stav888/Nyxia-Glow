@@ -2,8 +2,9 @@
 <resources>
     <style name="Theme.NyxiaGlow" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:statusBarColor">#0D1110</item>
-        <item name="android:navigationBarColor">#0D1110</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 </resources>

@@ -2,21 +2,21 @@ package com.nyxiaglow.app.camera
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
-import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.core.ImageProcessingOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 private data class InFlightFrame(
     val bitmap: Bitmap,
@@ -33,14 +33,17 @@ class FaceLandmarkAnalyzer(
 ) : ImageAnalysis.Analyzer {
     private var lastFaceFrameTime = 0L
     private var lastLightSampleTime = 0L
-    private val bitmapLock = Any()
+    private var lastLandmarkTimestamp = 0L
+    private val lock = ReentrantLock()
+    private val recycleHandler = Handler(Looper.getMainLooper())
     private var inFlightFrame: InFlightFrame? = null
     private val closed = AtomicBoolean(false)
-    private val faceLandmarker: FaceLandmarker? = createFaceLandmarker(
+    private var faceLandmarker: FaceLandmarker? = createFaceLandmarker(
         context,
         onLandmarksDetected,
         onError,
         ::takeInFlightFrame,
+        ::recycleLater,
         closed
     )
 
@@ -52,39 +55,44 @@ class FaceLandmarkAnalyzer(
                 lastLightSampleTime = now
                 sampleLuminance(image)?.let(onLightChanged)
             }
-            val landmarker = faceLandmarker ?: return
-            if (now - lastFaceFrameTime < FACE_SAMPLE_INTERVAL_MS) {
-                return
-            }
-            lastFaceFrameTime = now
-            val bitmap = image.toRgbaBitmap() ?: return
-            synchronized(bitmapLock) {
-                if (inFlightFrame != null) {
-                    bitmap.recycle()
+            if (now - lastFaceFrameTime < FACE_SAMPLE_INTERVAL_MS) return
+            val rotationDegrees = image.imageInfo.rotationDegrees
+            val decodedBitmap = image.toRgbaBitmap() ?: return
+            val bitmap = decodedBitmap.toMediaPipeBitmap()
+            if (bitmap !== decodedBitmap) decodedBitmap.recycle()
+            if (bitmap == null || bitmap.isRecycled) return
+            lock.withLock {
+                if (closed.get() || faceLandmarker == null || inFlightFrame != null) {
+                    recycleLater(bitmap)
                     return
                 }
-                inFlightFrame = InFlightFrame(bitmap, image.imageInfo.rotationDegrees)
-            }
-            try {
-                val mpImage = BitmapImageBuilder(bitmap).build()
-                val processingOptions = ImageProcessingOptions.builder()
-                    .setRotationDegrees(image.imageInfo.rotationDegrees)
-                    .build()
-                landmarker.detectAsync(mpImage, processingOptions, now)
-            } catch (exception: Exception) {
-                val ownsBitmap = synchronized(bitmapLock) {
+                lastFaceFrameTime = now
+                inFlightFrame = InFlightFrame(bitmap, rotationDegrees)
+                try {
+                    val mpImage = BitmapImageBuilder(bitmap).build()
+                    val processingOptions = ImageProcessingOptions.builder()
+                        .setRotationDegrees(rotationDegrees)
+                        .build()
+                    val timestamp = maxOf(now, lastLandmarkTimestamp + 1).also { lastLandmarkTimestamp = it }
+                    faceLandmarker?.detectAsync(mpImage, processingOptions, timestamp)
+                        ?: run {
+                            inFlightFrame = null
+                            recycleLater(bitmap)
+                        }
+                } catch (exception: Exception) {
                     if (inFlightFrame?.bitmap === bitmap) {
                         inFlightFrame = null
-                        true
-                    } else {
-                        false
+                        recycleLater(bitmap)
+                    }
+                    if (!closed.get()) {
+                        onError("${exception.javaClass.simpleName}: ${exception.message ?: "Face landmarking failed"}")
                     }
                 }
-                if (ownsBitmap) bitmap.recycle()
-                throw exception
             }
         } catch (exception: Exception) {
-            onError("${exception.javaClass.simpleName}: ${exception.message ?: "Face landmarking failed"}")
+            if (!closed.get()) {
+                onError("${exception.javaClass.simpleName}: ${exception.message ?: "Face landmarking failed"}")
+            }
         } finally {
             image.close()
         }
@@ -114,54 +122,75 @@ class FaceLandmarkAnalyzer(
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
-        faceLandmarker?.close()
-        takeInFlightFrame()?.bitmap?.recycle()
+        val pending: InFlightFrame?
+        val marker: FaceLandmarker?
+        lock.withLock {
+            marker = faceLandmarker
+            faceLandmarker = null
+            pending = takeInFlightFrame()
+        }
+        runCatching { marker?.close() }
+        pending?.bitmap?.let(::recycleLater)
     }
 
-    private fun takeInFlightFrame(): InFlightFrame? = synchronized(bitmapLock) {
+    private fun takeInFlightFrame(): InFlightFrame? = lock.withLock {
         val frame = inFlightFrame
         inFlightFrame = null
         frame
     }
 
+    private fun recycleLater(bitmap: Bitmap) {
+        recycleHandler.postDelayed({
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }, BITMAP_RELEASE_DELAY_MS)
+    }
+
     private companion object {
         const val FACE_SAMPLE_INTERVAL_MS = 100L
         const val LIGHT_SAMPLE_INTERVAL_MS = 250L
+        const val BITMAP_RELEASE_DELAY_MS = 500L
     }
 }
 
-private fun ImageProxy.toRgbaBitmap(): android.graphics.Bitmap? {
+private fun ImageProxy.toRgbaBitmap(): Bitmap? {
+    if (width < 16 || height < 16) return null
     val yPlane = planes.getOrNull(0) ?: return null
     val uPlane = planes.getOrNull(1) ?: return null
     val vPlane = planes.getOrNull(2) ?: return null
     val yBuffer = yPlane.buffer.duplicate()
     val uBuffer = uPlane.buffer.duplicate()
     val vBuffer = vPlane.buffer.duplicate()
-    val nv21 = ByteArray(width * height + 2 * ((width + 1) / 2) * ((height + 1) / 2))
-    var outputIndex = 0
+    val pixels = IntArray(width * height)
     for (row in 0 until height) {
-        val rowStart = yBuffer.position() + row * yPlane.rowStride
         for (column in 0 until width) {
-            val sourceIndex = rowStart + column * yPlane.pixelStride
-            if (sourceIndex >= yBuffer.limit()) return null
-            nv21[outputIndex++] = yBuffer.get(sourceIndex)
+            val yIndex = yBuffer.position() + row * yPlane.rowStride + column * yPlane.pixelStride
+            if (yIndex < yBuffer.position() || yIndex >= yBuffer.limit()) return null
+            val chromaRow = row / 2
+            val chromaColumn = column / 2
+            val uIndex = uBuffer.position() + chromaRow * uPlane.rowStride + chromaColumn * uPlane.pixelStride
+            val vIndex = vBuffer.position() + chromaRow * vPlane.rowStride + chromaColumn * vPlane.pixelStride
+            if (uIndex < uBuffer.position() || uIndex >= uBuffer.limit() ||
+                vIndex < vBuffer.position() || vIndex >= vBuffer.limit()
+            ) return null
+            val y = (yBuffer.get(yIndex).toInt() and 0xFF) - 16
+            val u = (uBuffer.get(uIndex).toInt() and 0xFF) - 128
+            val v = (vBuffer.get(vIndex).toInt() and 0xFF) - 128
+            val red = (1.164f * y + 1.596f * v).toInt().coerceIn(0, 255)
+            val green = (1.164f * y - 0.392f * u - 0.813f * v).toInt().coerceIn(0, 255)
+            val blue = (1.164f * y + 2.017f * u).toInt().coerceIn(0, 255)
+            pixels[row * width + column] = (0xFF shl 24) or (red shl 16) or (green shl 8) or blue
         }
     }
-    val chromaHeight = (height + 1) / 2
-    val chromaWidth = (width + 1) / 2
-    for (row in 0 until chromaHeight) {
-        for (column in 0 until chromaWidth) {
-            val uIndex = uBuffer.position() + row * uPlane.rowStride + column * uPlane.pixelStride
-            val vIndex = vBuffer.position() + row * vPlane.rowStride + column * vPlane.pixelStride
-            if (uIndex >= uBuffer.limit() || vIndex >= vBuffer.limit()) return null
-            nv21[outputIndex++] = vBuffer.get(vIndex)
-            nv21[outputIndex++] = uBuffer.get(uIndex)
-        }
+    return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+}
+
+private fun Bitmap.toMediaPipeBitmap(): Bitmap? {
+    if (isRecycled || width <= 0 || height <= 0) return null
+    return try {
+        copy(Bitmap.Config.ARGB_8888, false)
+    } catch (_: RuntimeException) {
+        null
     }
-    val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-    val jpeg = java.io.ByteArrayOutputStream()
-    if (!yuvImage.compressToJpeg(Rect(0, 0, width, height), 85, jpeg)) return null
-    return BitmapFactory.decodeByteArray(jpeg.toByteArray(), 0, jpeg.size())
 }
 
 private fun createFaceLandmarker(
@@ -169,6 +198,7 @@ private fun createFaceLandmarker(
     onLandmarksDetected: (FaceLandmarkerResult, Int) -> Unit,
     onError: (String) -> Unit,
     takeInFlightFrame: () -> InFlightFrame?,
+    recycleBitmap: (Bitmap) -> Unit,
     closed: AtomicBoolean
 ): FaceLandmarker? {
     fun options(delegate: Delegate): FaceLandmarker.FaceLandmarkerOptions =
@@ -185,11 +215,11 @@ private fun createFaceLandmarker(
             .setMinTrackingConfidence(0.5f)
             .setResultListener { result, _ ->
                 val frame = takeInFlightFrame() ?: return@setResultListener
-                frame.bitmap.recycle()
+                recycleBitmap(frame.bitmap)
                 if (!closed.get()) onLandmarksDetected(result, frame.rotationDegrees)
             }
             .setErrorListener { error ->
-                takeInFlightFrame()?.bitmap?.recycle()
+                takeInFlightFrame()?.bitmap?.let(recycleBitmap)
                 if (!closed.get()) {
                     onError(error.message ?: "Face landmarking unavailable")
                 }
@@ -197,13 +227,9 @@ private fun createFaceLandmarker(
             .build()
 
     return try {
-        FaceLandmarker.createFromOptions(context, options(Delegate.GPU))
-    } catch (gpuException: Exception) {
-        try {
-            FaceLandmarker.createFromOptions(context, options(Delegate.CPU))
-        } catch (cpuException: Exception) {
-            onError(cpuException.message ?: gpuException.message ?: "Face landmark model unavailable")
-            null
-        }
+        FaceLandmarker.createFromOptions(context, options(Delegate.CPU))
+    } catch (cpuException: Exception) {
+        onError(cpuException.message ?: "Face landmark model unavailable")
+        null
     }
 }

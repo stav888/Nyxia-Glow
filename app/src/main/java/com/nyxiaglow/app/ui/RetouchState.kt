@@ -4,7 +4,7 @@ data class RetouchState(
     val preserveTexture: Boolean = true,
     val smoothingIntensity: Float = 0.45f,
     val selectedTool: String = "Skin",
-    val selectedPreset: String = "Smooth"
+    val selectedPreset: String = "natural"
 ) {
     fun reset(): RetouchState = RetouchState()
 }

@@ -12,7 +12,7 @@ class RetouchStateTest {
         assertTrue(state.preserveTexture)
         assertEquals(0.45f, state.smoothingIntensity, 0.0001f)
         assertEquals("Skin", state.selectedTool)
-        assertEquals("Smooth", state.selectedPreset)
+        assertEquals("natural", state.selectedPreset)
     }
 
     @Test

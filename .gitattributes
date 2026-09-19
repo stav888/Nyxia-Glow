@@ -1,0 +1,11 @@
+# GitHub language stats: the app is Kotlin. Stitch mockups are vendored web assets.
+stitch_assets/** linguist-vendored
+*.html linguist-vendored
+stitch_assets/** -diff
+
+# Generated / reference dumps, not app source.
+design.txt linguist-generated linguist-documentation
+screens.md linguist-documentation
+
+# Large reference docs.
+*.png -diff

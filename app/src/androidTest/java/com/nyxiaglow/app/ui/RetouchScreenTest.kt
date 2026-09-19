@@ -1,16 +1,17 @@
 package com.nyxiaglow.app.ui
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.hasRole
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeRight
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -22,26 +23,22 @@ class RetouchScreenTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun toolsAndPresetsAreVisible() {
+    fun looksAreVisible() {
         composeRule.setContent { TestRetouchScreen() }
 
-        composeRule.onNodeWithText("Skin").assertIsDisplayed().assertIsSelected()
-        composeRule.onNodeWithText("Shape").assertIsDisplayed()
-        composeRule.onNodeWithText("Light").assertIsDisplayed()
-        composeRule.onNodeWithText("Makeup").assertIsDisplayed()
-        composeRule.onNodeWithText("Smooth").assertIsDisplayed().assertIsSelected()
-        composeRule.onNodeWithText("Freckles").assertIsDisplayed()
+        composeRule.onNodeWithText("Natural").assertIsDisplayed().assertIsSelected()
+        composeRule.onNodeWithText("Nude").assertIsDisplayed()
+        composeRule.onNodeWithText("Glam").assertIsDisplayed()
         composeRule.onNodeWithText("Matte").assertIsDisplayed()
         composeRule.onNodeWithText("Dewy").assertIsDisplayed()
-        composeRule.onNodeWithText("Refine").assertIsDisplayed()
     }
 
     @Test
-    fun everyPresetCanBeSelected() {
+    fun everyLookCanBeSelected() {
         composeRule.setContent { TestRetouchScreen() }
 
-        listOf("Smooth", "Freckles", "Matte", "Dewy", "Refine").forEach { preset ->
-            composeRule.onNodeWithText(preset).performClick().assertIsSelected()
+        GlowLooks.all.forEach { look ->
+            composeRule.onNodeWithText(look.title).performClick().assertIsSelected()
         }
     }
 
@@ -53,7 +50,7 @@ class RetouchScreenTest {
                 preserveTexture = true,
                 smoothingIntensity = 0.45f,
                 selectedTool = "Skin",
-                selectedPreset = "Smooth",
+                selectedPreset = "natural",
                 onTextureToggle = {},
                 onSmoothingChange = { values += it },
                 onToolSelected = {},
@@ -63,7 +60,9 @@ class RetouchScreenTest {
             )
         }
 
-        composeRule.onNode(hasRole(Role.Slider)).performTouchInput { swipeRight() }
+        composeRule.onNode(
+            SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)
+        ).performTouchInput { swipeRight() }
 
         assert(values.isNotEmpty())
         assert(values.all { it in 0f..1f })
@@ -77,7 +76,7 @@ class RetouchScreenTest {
                 preserveTexture = true,
                 smoothingIntensity = 0.45f,
                 selectedTool = "Skin",
-                selectedPreset = "Smooth",
+                selectedPreset = "natural",
                 onTextureToggle = { toggleCount++ },
                 onSmoothingChange = {},
                 onToolSelected = {},
@@ -87,19 +86,16 @@ class RetouchScreenTest {
             )
         }
 
-        composeRule.onNodeWithText("Subtle Micro-Texture").performClick()
+        composeRule.onNodeWithText("Keep natural texture").performClick()
 
         assert(toggleCount == 1)
     }
 
     @Test
-    fun selectingToolAndPresetUpdatesSemantics() {
+    fun selectingLookUpdatesSemantics() {
         composeRule.setContent { TestRetouchScreen() }
 
-        composeRule.onNodeWithText("Makeup").performClick()
         composeRule.onNodeWithText("Dewy").performClick()
-
-        composeRule.onNodeWithText("Makeup").assertIsSelected()
         composeRule.onNodeWithText("Dewy").assertIsSelected()
     }
 
@@ -112,7 +108,7 @@ class RetouchScreenTest {
                 preserveTexture = true,
                 smoothingIntensity = 0.45f,
                 selectedTool = "Skin",
-                selectedPreset = "Smooth",
+                selectedPreset = "natural",
                 onTextureToggle = {},
                 onSmoothingChange = {},
                 onToolSelected = {},
@@ -131,17 +127,16 @@ class RetouchScreenTest {
 
     @Composable
     private fun TestRetouchScreen() {
-        val selectedTool = mutableStateOf("Skin")
-        val selectedPreset = mutableStateOf("Smooth")
+        val selectedPreset = remember { mutableStateOf("natural") }
 
         RetouchScreen(
             preserveTexture = true,
             smoothingIntensity = 0.45f,
-            selectedTool = selectedTool.value,
+            selectedTool = "Skin",
             selectedPreset = selectedPreset.value,
             onTextureToggle = {},
             onSmoothingChange = {},
-            onToolSelected = { selectedTool.value = it },
+            onToolSelected = {},
             onPresetSelected = { selectedPreset.value = it },
             onReset = {},
             onApply = {}

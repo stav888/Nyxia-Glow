@@ -55,8 +55,11 @@ class CameraVisualSafetyTest {
 
     @Test
     fun landmarkChangeAtExactThresholdCountsAsChanged() {
-        val previous = floatArrayOf(.2f, .3f)
-        val current = floatArrayOf(.203f, .3f)
+        // Uses the exact threshold constant: 0.203f - 0.2f is NOT exactly 0.003f
+        // in IEEE-754 (it rounds to slightly less), so decimal literals would
+        // make this boundary test depend on float rounding instead of intent.
+        val previous = floatArrayOf(0f, .3f)
+        val current = floatArrayOf(LandmarkChangeDetector.THRESHOLD, .3f)
 
         assertTrue(LandmarkChangeDetector.changed(previous, current))
     }
@@ -84,6 +87,7 @@ class CameraVisualSafetyTest {
         assertEquals(0f, RendererParameters.clampStrength(-1f), .0001f)
         assertEquals(1f, RendererParameters.clampStrength(2f), .0001f)
         assertEquals(.4f, RendererParameters.clampStrength(.4f), .0001f)
+        assertEquals(0f, RendererParameters.clampStrength(Float.NEGATIVE_INFINITY), .0001f)
     }
 
     @Test

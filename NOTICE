@@ -1,0 +1,27 @@
+Nyxia Glow — Third-Party Notices
+====================================
+
+This application source is released under the MIT License (see LICENSE).
+The following third-party components are used under their own licenses and
+are NOT covered by the MIT license above.
+
+1. MediaPipe Tasks Vision (Apache License 2.0)
+   - Package: com.google.mediapipe:tasks-vision
+   - Source: https://github.com/google-ai-edge/mediapipe
+   - License: Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+
+2. MediaPipe Face Landmarker model (`app/src/main/assets/face_landmarker.task`)
+   - Provided by Google AI Edge / MediaPipe under the Apache License 2.0.
+   - Model card and terms: https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker
+   - Do not redistribute the model file outside the terms of its license.
+
+3. Stitch / AuraSync design mockups (`stitch_assets/`, `screens.md`, `design.txt`)
+   - Visual reference only. Not part of the application build.
+   - Implementation is written from scratch in Jetpack Compose; no Stitch HTML,
+     CSS, or image assets ship inside the APK.
+
+4. Nyxia Look LUTs (`LookLut.kt`, live `uColorLut` sampler)
+   - Color cubes are generated at runtime by Nyxia Glow. No third-party LUT
+     PNG/CUBE files, GPUPixel, GPUImage, CainCamera, or Mars-Face binaries
+     are bundled.
+   - Packed 8×8 / 64³ lookup sampling is a standard GPU color-grading layout.
